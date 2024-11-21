@@ -46,8 +46,8 @@ def load_edgelist_to_graph(file_path):
 novelist = ["PrideAndPrejudice", "AnotherNovel"]
 graphs = []
 raw_labels = {
-    "PrideAndPrejudice": ("Elizabeth", "Darcy"),  # 단일 라벨
-    "AnotherNovel": ("Harry", "Hermione")        # 단일 라벨
+    "PrideAndPrejudice": ("Elizabeth", "Darcy"),
+    "AnotherNovel": ("Harry", "Hermione")
 }
 
 for name in novelist:

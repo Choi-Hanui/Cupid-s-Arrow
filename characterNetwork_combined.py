@@ -308,7 +308,7 @@ def classify_gender_with_kaggle_and_context(name_list, gender_data, sentence_lis
             if pronoun_counter['Male'] > pronoun_counter['Female']:
                 gender_dict[name] = 'M'
             elif pronoun_counter['Female'] > pronoun_counter['Male']:
-                gender_dict[name] = ''
+                gender_dict[name] = 'F'
             else:
                 # Default to male if no clear context
                 gender_dict[name] = 'N'

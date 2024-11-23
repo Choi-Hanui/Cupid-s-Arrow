@@ -17,7 +17,7 @@ from pathlib import Path
 from afinn import Afinn
 from nltk.tokenize import sent_tokenize
 from sklearn.feature_extraction.text import CountVectorizer
-
+from collections import Counter
 
 def flatten(input_list):
     '''
@@ -274,18 +274,72 @@ def plot_combined_graph(name_list, name_frequency, cooccurrence_matrix, sentimen
     plt.savefig(path + plt_name + '.png')
     nx.write_edgelist(G, path + plt_name + '.edgelist', data=True)
 
+def classify_gender_with_kaggle_and_context(name_list, gender_data, sentence_list):
+    '''
+    Function to classify gender based on names using the Kaggle dataset and refine predictions using context.
+    :param name_list: List of names to classify.
+    :param gender_data: DataFrame containing name and gender mappings.
+    :param sentence_list: List of sentences from the text for context-based analysis.
+    :return: Dictionary mapping names to genders.
+    '''
+    gender_dict = {}
+
+    for name in name_list:
+        first_name = name.split()[0].lower()
+        gender_row = gender_data[gender_data['Name'] == first_name]
+
+        # Use Kaggle dataset for gender prediction
+        if not gender_row.empty:
+            gender_dict[name] = gender_row.iloc[0]['Gender']
+        else:
+            # Use context to refine predictions
+            context_sentences = [sent for sent in sentence_list if name in sent.lower()]
+            pronoun_counter = Counter()
+
+            for sentence in context_sentences:
+                # Count gender-specific pronouns
+                pronoun_counter['Male'] += sentence.lower().count('he') + sentence.lower().count('him')
+                pronoun_counter['Female'] += sentence.lower().count('she') + sentence.lower().count('her')
+
+            # Refine gender prediction based on pronouns
+            if pronoun_counter['Male'] > pronoun_counter['Female']:
+                gender_dict[name] = 'M'
+            elif pronoun_counter['Female'] > pronoun_counter['Male']:
+                gender_dict[name] = 'F'
+            else:
+                # Default to male if no clear context
+                gender_dict[name] = 'N'
+                
+
+    return gender_dict
+
 
 if __name__ == '__main__':
     nlp = spacy.load('en_core_web_sm')
-    words = common_words('novels/common_words.txt')
-    novel_name = 'PrideAndPrejudice'
+    nlp.max_length = 2000000 
+    words = common_words('common_datas/common_words.txt')
+    novel_name = 'ThePhantomOfTheOpera'
     novel_folder = Path(os.getcwd()) / 'novels'
     novel = read_novel(novel_name, novel_folder)
     sentence_list = sent_tokenize(novel)
+    # sentence_list = [sent.text for sent in nlp(novel).sents]
     align_rate = calculate_align_rate(sentence_list)
     preliminary_name_list = iterative_NER(sentence_list)
     print("!!!!!! 등장인물 이름: ", preliminary_name_list)
     name_frequency, name_list = top_names(preliminary_name_list, novel, 25)
+    
+    # 성별 예측
+    gender_data = pd.read_csv('common_datas/gender_by_name.csv')
+    gender_data['Name'] = gender_data['Name'].str.lower()  # 이름을 소문자로 통일
+    
+    predicted_genders = classify_gender_with_kaggle_and_context(name_list, gender_data, sentence_list)
+    print("\n!!!!!! 성별 예측 결과:", predicted_genders)
+    
+    nodelist_path = f'./graphs/{novel_name} gender.nodelist'
+    with open(nodelist_path, 'w', encoding='utf-8') as f:
+        for name, gender in predicted_genders.items():
+            f.write(f"{name},{gender}\n")
+
     cooccurrence_matrix, sentiment_matrix = calculate_matrix(name_list, sentence_list, align_rate)
 
     # Create and save the combined graph

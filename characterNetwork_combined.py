@@ -17,103 +17,93 @@ from pathlib import Path
 from afinn import Afinn
 from nltk.tokenize import sent_tokenize
 from sklearn.feature_extraction.text import CountVectorizer
+import gender_guesser.detector as gender
 from collections import Counter
+import re
 
-def flatten(input_list):
-    '''
-    A function to flatten complex list.
-    :param input_list: The list to be flatten
-    :return: the flattened list.
-    '''
+# 텍스트 파일 읽기
+def read_novel(novel_path):
+    with open(novel_path, "r", encoding="utf-8") as f:
+        return f.read()
 
-    flat_list = []
-    for i in input_list:
-        if type(i) == list:
-            flat_list += flatten(i)
-        else:
-            flat_list += [i]
+# 성별 예측기 초기화
+detector = gender.Detector()
 
-    return flat_list
+# 텍스트 전처리
+def preprocess_text(text):
+    # 줄바꿈 제거 및 기본 전처리
+    return text.replace("\n", " ").replace("\r", "").strip()
 
-
-def common_words(path):
-    '''
-    A function to read-in the top common words from external .txt document.
-    :param path: The path where the common words info is stored.
-    :return: A set of the top common words.
-    '''
-
-    with codecs.open(path) as f:
-        words = f.read()
-        words = json.loads(words)
-
-    return set(words)
-
-
-def read_novel(book_name, path):
-    '''
-    A function to read-in the novel text from given path.
-    :param book_name: The name of the novel.
-    :param path: The path where the novel text file is stored.
-    :return: the novel text.
-    '''
-
-    book_list = os.listdir(path)
-    book_list = [i for i in book_list if i.find(book_name) >= 0]
-    novel = ''
-    for i in book_list:
-        with codecs.open(path / i, 'r', encoding='utf-8', errors='ignore') as f:
-            data = f.read().replace('\r', ' ').replace('\n', ' ').replace("\'", "'")
-        novel += ' ' + data
-
-    return novel
-
-
-def name_entity_recognition(sentence):
-    '''
-    A function to retrieve name entities in a sentence.
-    :param sentence: the sentence to retrieve names from.
-    :return: a name entity list of the sentence.
-    '''
-
-    doc = nlp(sentence)
-    # retrieve person and organization's name from the sentence
-    name_entity = [x for x in doc.ents if x.label_ in ['PERSON', 'ORG']]
-    # convert all names to lowercase and remove 's in names
-    name_entity = [str(x).lower().replace("'s","") for x in name_entity]
-    # split names into single words ('Harry Potter' -> ['Harry', 'Potter'])
-    name_entity = [x.split(' ') for x in name_entity]
-    # flatten the name list
-    name_entity = flatten(name_entity)
-    # remove name words that are less than 3 letters to raise recognition accuracy
-    name_entity = [x for x in name_entity if len(x) >= 3]
-    # remove name words that are in the set of 4000 common words
-    name_entity = [x for x in name_entity if x not in words]
-
-    return name_entity
+# 인물 이름 및 맥락 정보 추출
+def extract_names_and_context(text):
+    doc = nlp(text)
+    characters = []
+    context_info = {}
+    
+    male_keywords = {"mr.", "sir", "lord", "father", "clergyman", "king", "husband", "son", "brother", "prince", "captain", "duke"}
+    female_keywords = {"mrs.", "miss", "lady", "queen", "mother", "wife", "daughter", "sister", "widow", "maid", "princess", "duchess"}
+    
+    for ent in doc.ents:
+        if ent.label_ == "PERSON":
+             # 이름 정규화 및 소문자 변환
+            name = (
+                ent.text.replace("’s", "")
+                .replace("'s", "")
+                .replace("Mr. ", "")
+                .replace("Miss ", "")
+                .replace("Mrs. ", "")
+                .strip()
+                .lower()
+            )
+            characters.append(name)
+            
+            name = re.sub(r'\.$', '', name)
+            # 주변 텍스트에서 역할이나 힌트 추출
+            surrounding_text = doc[max(0, ent.start-5):min(len(doc), ent.end+5)].text.lower()
+            if any(keyword in surrounding_text for keyword in female_keywords):
+                context_info[name] = "female"
+            elif any(keyword in surrounding_text for keyword in male_keywords):
+                context_info[name] = "male"
+                
+    print(characters)
+    return characters, context_info
 
 
-def iterative_NER(sentence_list, threshold_rate=0.0005):
-    '''
-    A function to execute the name entity recognition function iteratively. The purpose of this
-    function is to recognise all the important names while reducing recognition errors.
-    :param sentence_list: the list of sentences from the novel
-    :param threshold_rate: the per sentence frequency threshold, if a word's frequency is lower than this
-    threshold, it would be removed from the list because there might be recognition errors.
-    :return: a non-duplicate list of names in the novel.
-    '''
 
-    output = []
-    for i in sentence_list:
-        name_list = name_entity_recognition(i)
-        if name_list != []:
-            output.append(name_list)
-    output = flatten(output)
-    from collections import Counter
-    output = Counter(output)
-    output = [x for x in output if output[x] >= threshold_rate * len(sentence_list)]
+def get_top_characters(names, top_n=20):
+    """
+    Extracts the top N characters based on their frequency in the text.
 
-    return output
+    :param names: List of all character names in the text.
+    :param top_n: Number of top characters to return.
+    :return: A tuple of (frequencies, character_names).
+    """
+    name_counts = Counter(names)
+    most_common = name_counts.most_common(top_n)
+    
+    # Extract frequencies and names into separate lists
+    frequencies = [count for _, count in most_common]
+    character_names = [name for name, _ in most_common]
+    
+    return frequencies, character_names
+
+
+
+# 성별 추론 (이름 + 맥락 기반)
+def predict_gender(names, context_info):
+    genders = {}
+    for name in names:
+        first_name = name.split()[0]  # 이름의 첫 번째 부분만 사용
+        gender_prediction = detector.get_gender(first_name)
+        
+        # 맥락 정보로 보완
+        if name in context_info:
+            gender_prediction = context_info[name]
+        elif gender_prediction == "unknown":  # 주변 맥락으로 성별 보완
+            gender_prediction = context_info.get(name, "unknown")
+        
+        genders[name] = gender_prediction
+    return genders
 
 
 def top_names(name_list, novel, top_num=20):
@@ -236,118 +226,145 @@ def matrix_to_combined_edge_list(cooccurrence_matrix, sentiment_matrix, name_lis
     return edge_list
 
 
-def plot_combined_graph(name_list, name_frequency, cooccurrence_matrix, sentiment_matrix, plt_name, path=''):
-    '''
-    Function to create and save a combined network graph (with co-occurrence and sentiment).
-    :param name_list: The list of top character names in the novel.
-    :param name_frequency: The list containing the frequencies of the top names.
-    :param cooccurrence_matrix: Co-occurrence matrix.
-    :param sentiment_matrix: Sentiment matrix.
-    :param plt_name: The name of the plot and edgelist file to output.
-    :param path: The path to output the files.
-    '''
+def plot_combined_graph(name_list, name_frequency, cooccurrence_matrix, sentiment_matrix, genders, plt_name, path=''):
+    """
+    성별에 따라 노드 색상을 설정하여 그래프를 생성합니다.
+    :param name_list: 주요 등장인물 리스트.
+    :param name_frequency: 주요 등장인물의 등장 빈도 리스트.
+    :param cooccurrence_matrix: 공존 행렬.
+    :param sentiment_matrix: 감정 행렬.
+    :param genders: {이름: 성별} 형태의 사전.
+    :param plt_name: 그래프 파일 이름.
+    :param path: 그래프 파일 저장 경로.
+    """
+    # 성별을 F, M, U로 변환
+    gender_map = {
+        'male': 'M',
+        'female': 'F',
+        'unknown': 'U',
+        'andy': 'U'  # 모호한 경우 처리
+    }
+    mapped_genders = {name: gender_map.get(gender, 'U') for name, gender in genders.items()}
+    
+    # 성별에 따른 색상 매핑
+    color_map = {'F': 'red', 'M': 'blue', 'U': 'gray'}
+    node_colors = [color_map[mapped_genders.get(name, 'U')] for name in name_list]
+    
+    # 노드 레이블 설정
     label = {i: i for i in name_list}
+    
+    # 엣지 리스트 생성
     edge_list = matrix_to_combined_edge_list(cooccurrence_matrix, sentiment_matrix, name_list)
+    
+    # 등장 빈도 정규화
     normalized_frequency = np.array(name_frequency) / np.max(name_frequency)
 
+    # 그래프 생성
     G = nx.Graph()
     G.add_nodes_from(name_list)
     G.add_edges_from(edge_list)
+    
     pos = nx.circular_layout(G)
     edges = G.edges()
 
-    # Extract weights for plotting
+    # 엣지 가중치 추출
     co_occurrence_weights = [G[u][v]['co_occurrence'] for u, v in edges]
     sentiment_weights = [G[u][v]['sentiment'] for u, v in edges]
 
-    # Plot the combined graph
+    # 그래프 그리기
     plt.figure(figsize=(20, 20))
     nx.draw(
-        G, pos, node_color='#A0CBE2',
-        node_size=np.sqrt(normalized_frequency) * 4000,
-        linewidths=10, font_size=35, labels=label,
-        edge_color=sentiment_weights, edge_cmap=plt.cm.RdYlBu,
-        with_labels=True, width=co_occurrence_weights
+        G,
+        pos,
+        node_color=node_colors,  # 노드 색상
+        node_size=np.sqrt(normalized_frequency) * 4000,  # 노드 크기
+        linewidths=10,
+        font_size=35,
+        labels=label,
+        edge_color=sentiment_weights,  # 감정 가중치로 엣지 색상
+        edge_cmap=plt.cm.RdYlBu,
+        with_labels=True,
+        width=co_occurrence_weights
     )
 
-    # Save the plot and the combined edgelist
+    # 그래프 저장
     plt.savefig(path + plt_name + '.png')
     nx.write_edgelist(G, path + plt_name + '.edgelist', data=True)
 
-def classify_gender_with_kaggle_and_context(name_list, gender_data, sentence_list):
-    '''
-    Function to classify gender based on names using the Kaggle dataset and refine predictions using context.
-    :param name_list: List of names to classify.
-    :param gender_data: DataFrame containing name and gender mappings.
-    :param sentence_list: List of sentences from the text for context-based analysis.
-    :return: Dictionary mapping names to genders.
-    '''
-    gender_dict = {}
-
-    for name in name_list:
-        first_name = name.split()[0].lower()
-        gender_row = gender_data[gender_data['Name'] == first_name]
-
-        # Use Kaggle dataset for gender prediction
-        if not gender_row.empty:
-            gender_dict[name] = gender_row.iloc[0]['Gender']
-        else:
-            # Use context to refine predictions
-            context_sentences = [sent for sent in sentence_list if name in sent.lower()]
-            pronoun_counter = Counter()
-
-            for sentence in context_sentences:
-                # Count gender-specific pronouns
-                pronoun_counter['Male'] += sentence.lower().count('he') + sentence.lower().count('him')
-                pronoun_counter['Female'] += sentence.lower().count('she') + sentence.lower().count('her')
-
-            # Refine gender prediction based on pronouns
-            if pronoun_counter['Male'] > pronoun_counter['Female']:
-                gender_dict[name] = 'M'
-            elif pronoun_counter['Female'] > pronoun_counter['Male']:
-                gender_dict[name] = 'F'
-            else:
-                # Default to male if no clear context
-                gender_dict[name] = 'N'
-                
-
-    return gender_dict
 
 
-if __name__ == '__main__':
+def save_nodelist(genders, output_file):
+    """
+    성별 정보를 기반으로 nodelist 파일을 생성합니다.
+    :param genders: {이름: 성별} 형태의 사전.
+    :param output_file: 저장할 파일 경로.
+    """
+    # 성별을 F, M, U 형식으로 매핑
+    gender_map = {
+        'male': 'M',
+        'female': 'F',
+        'unknown': 'U',
+        'andy': 'U'  # gender_guesser의 'andy' (ambiguous) 처리
+    }
+    
+    with open(output_file, 'w', encoding='utf-8') as f:
+        for name, gender in genders.items():
+            mapped_gender = gender_map.get(gender, 'U')  # 성별 매핑, 없으면 'U'
+            f.write(f"{name},{mapped_gender}\n")
+
+
+if __name__ == "__main__":
+    # Spacy 및 Afinn 로드
     nlp = spacy.load('en_core_web_sm')
-    nlp.max_length = 2000000 
-    words = common_words('common_datas/common_words.txt')
-    novel_name = 'ThePhantomOfTheOpera'
+    nlp.max_length = 2000000
+    afinn = Afinn()
+
+    # 텍스트 읽기
+    novel_name = 'ThePhantomOfTheOpera'  # 확장자를 제외한 제목만 입력
     novel_folder = Path(os.getcwd()) / 'novels'
-    novel = read_novel(novel_name, novel_folder)
-    sentence_list = sent_tokenize(novel)
-    # sentence_list = [sent.text for sent in nlp(novel).sents]
+
+    # 파일 경로 조합 시 확장자 자동 추가
+    novel_path = novel_folder / f"{novel_name}.txt"
+    
+    # 텍스트 읽기 및 전처리
+    novel = preprocess_text(read_novel(novel_path))
+    
+    # 문장 리스트 생성
+    sentence_list = [sent.text for sent in nlp(novel).sents]
+    total_sentence = len(sentence_list)
+    
+    # 이름 및 맥락 추출
+    names, context_info = extract_names_and_context(novel)
+    
+    name_frequency, name_list = get_top_characters(names)
+    name_list = [name.lower() for name in name_list]
+    # 성별 추론
+    genders = predict_gender(name_list, context_info)
+
+    # 최상위 등장인물 및 빈도 출력
+    print("주요 등장인물 및 등장 빈도:")
+    for name, freq in zip(name_list, name_frequency):
+        print(f"{name}: {freq}회 등장")
+    
+    print("\n등장인물의 성별 추정:")
+    for name, gender_prediction in genders.items():
+        print(f"{name}: {gender_prediction}")
+
+    # 감정 및 공존 행렬 계산
     align_rate = calculate_align_rate(sentence_list)
-    preliminary_name_list = iterative_NER(sentence_list)
-    print("!!!!!! 등장인물 이름: ", preliminary_name_list)
-    name_frequency, name_list = top_names(preliminary_name_list, novel, 25)
-    
-    # 성별 예측
-    gender_data = pd.read_csv('common_datas/gender_by_name.csv')
-    gender_data['Name'] = gender_data['Name'].str.lower()  # 이름을 소문자로 통일
-    
-    predicted_genders = classify_gender_with_kaggle_and_context(name_list, gender_data, sentence_list)
-    print("\n!!!!!! 성별 예측 결과:", predicted_genders)
-    
-    nodelist_path = f'./graphs/{novel_name} gender.nodelist'
-    with open(nodelist_path, 'w', encoding='utf-8') as f:
-        for name, gender in predicted_genders.items():
-            f.write(f"{name},{gender}\n")
-
     cooccurrence_matrix, sentiment_matrix = calculate_matrix(name_list, sentence_list, align_rate)
+    
+    # Nodelist 저장
+    nodelist_path = f'./graphs/{novel_name}_gender.nodelist'
+    save_nodelist(genders, nodelist_path)
 
-    # Create and save the combined graph
+    # 네트워크 그래프 생성
     plot_combined_graph(
-        name_list,
-        name_frequency,
-        cooccurrence_matrix,
-        sentiment_matrix,
-        novel_name + ' combined graph',
+        name_list=name_list,
+        name_frequency=name_frequency,
+        cooccurrence_matrix=cooccurrence_matrix,
+        sentiment_matrix=sentiment_matrix,
+        plt_name=novel_name + ' combined graph',
+        genders=genders,
         path='./graphs/'
     )

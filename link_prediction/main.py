@@ -2,6 +2,12 @@
 
 # main.py
 import torch
+import difflib
+import warnings
+
+# UserWarning 무시
+warnings.filterwarnings("ignore", category=UserWarning)
+
 from link_prediction.cgcnn import CGCNN  # 모델 클래스와 디바이스 가져오기
 from link_prediction.similarity import calculate_similarity  # 유사도 계산 함수
 from link_prediction.cgcnn import load_graph_from_lists,find_closest_name,train  # 그래프 로드 함수
@@ -36,67 +42,44 @@ hidden_channels = 64  # 은닉 채널 수
 
 # 모델 초기화 및 로드
 model = CGCNN(node_features=node_features, edge_features=edge_features, hidden_channels=hidden_channels).to(device)
-iftrain=True
+iftrain=False
 if iftrain:
     print('train_start')
-    train(2001)
-model_load_path = "./trained_model1000step.pth"
+    train(101)
+model_load_path = "./trained_model100step.pth"
 model.load_state_dict(torch.load(model_load_path, map_location=device,weights_only=True))
 model.eval()  # 평가 모드로 전환
 print(f"Model loaded from {model_load_path}")
 
 # 테스트 데이터 로드
 edge_list_path = './graphs/APairOfBlueEyes combined graph.edgelist'
-node_list_path = './graphs/APairOfBlueEyes gender.nodelist'
+node_list_path = './graphs/APairOfBlueEyes_gender.nodelist'
 test_graph, mapping = load_graph_from_lists(edge_list_path, node_list_path)
 test_graph = test_graph.to(device)
 
 
-lower_mapping = {node.lower(): node for node in mapping.keys() if isinstance(node, str)}
-node_names_lower = list(lower_mapping.keys())
-raw_labels = {
-        "APairOfBlueEyes": ("swancourt", "knight"), # 엘프리다 스완코트 & 헨리 나이트 & 스티븐 스미스  왜 학습이 되징..?  엥...? 뭐냥 이거
-        #"APairOfBlueEyes": ("swancourt", "smith"), # 엘프리다 스완코트 & 헨리 나이트 & 스티븐 스미스 셋이 삼각관계인데 누구와도 이루어지지 못하고 죽습니다
-    }
-
-# Find closest matches for raw_labels
-raw_label_0, raw_label_1 = raw_labels["APairOfBlueEyes"]
-closest_0 = find_closest_name(raw_label_0, node_names_lower)
-closest_1 = find_closest_name(raw_label_1, node_names_lower)
-
-# Replace with closest matches and log changes
-if closest_0 and closest_1:
-    #print(f"In {name}, replacing '{raw_label_0}' with '{closest_0}' and '{raw_label_1}' with '{closest_1}'")
-    label = torch.tensor([mapping[lower_mapping[closest_0]], mapping[lower_mapping[closest_1]]])
-    
-else:
-    print(f"Warning: Could not find a match for one or both labels in {name}. Skipping this graph.")
-
-
-print(test_graph.x)
+test_graph.x=test_graph.x.float()
+test_graph.edge_attr.float()
 
 # 모델로 노드 특성 추출
 with torch.no_grad():
     output_vectors = model(test_graph.x, test_graph.edge_index, test_graph.edge_attr)
 
 # 노드 간 유사도 계산
-similarity_matrix = calculate_similarity(output_vectors,label)
-print(label)
-print(similarity_matrix)
+similarity_matrix = calculate_similarity(output_vectors)
 
-predicted_nodes =similarity_matrix.argmax(dim=1)
 
-'''
 
 # 유사도가 가장 높은 노드 쌍 예측
-i, j = torch.triu_indices(similarity_matrix.size(0), similarity_matrix.size(1), 1)  # 상삼각 행렬의 인덱스 추출
-predicted_indices = similarity_matrix[i, j].argmax()  # 유사도가 가장 높은 인덱스 찾기
-predicted_nodes = (i[predicted_indices].item(), j[predicted_indices].item())  # 가장 높은 유사도를 갖는 노드 쌍
-'''
+
+max_value = torch.max(similarity_matrix)  # 최대값
+max_index = torch.argmax(similarity_matrix)  # 1D로 펼쳐진 인덱스
+
+# 2차원 텐서에서의 좌표 (row, col)
+row, col = divmod(max_index.item(), similarity_matrix.size(1))
+
 # 예측 결과 출력
 reverse_mapping = {v: k for k, v in mapping.items()}  # 숫자 인덱스를 노드 이름으로 매핑
-predicted_node_names = (reverse_mapping[predicted_nodes[0].item()], reverse_mapping[predicted_nodes[1].item()])
-
-print(f"Predicted Node Names: {predicted_node_names}")
-print('May be '+closest_0+' fall in love to '+predicted_node_names[0])
-print('May be '+closest_1+' fall in love to '+predicted_node_names[1])
+predicted_node_names = (reverse_mapping[row], reverse_mapping[col])
+print(predicted_node_names[0]+' and '+predicted_node_names[1]+' have highest attention score')
+print('May be '+predicted_node_names[0]+' fall in love to '+predicted_node_names[1])

@@ -126,7 +126,7 @@ def load_graph_from_lists(edgelist_path, nodelist=None):
             elif node.endswith('M'):
                 node_gender.append([1,0])
             else:
-                print('error')
+                node_gender.append([0,0])
             if node not in G.nodes:
                 G.add_node(node)
 
@@ -158,8 +158,7 @@ def train(train_epoch=1000):
 
     graphs = []
     raw_labels = {
-        # "APairOfBlueEyes": ("swancourt", "knight"), # 엘프리다 스완코트 & 헨리 나이트 & 스티븐 스미스 
-        # "APairOfBlueEyes": ("swancourt", "smith"), # 셋이 삼각관계인데 누구와도 이루어지지 못하고 죽습니다
+        
         "ARoomWithAView": ("honeychurch", "emerson"), # 루시 허니처치 & 조지 에머슨
         "AnnaOfTheIsland": ("anne", "gilbert"),  # 앤 셜리 & 길버트 블라이드
         "AnneOfAvonlea": ("anne", "gilbert"), # 앤 셜리 & 길버트 블라이드
@@ -180,7 +179,7 @@ def train(train_epoch=1000):
     for name in novelist:
         graph, mapping = load_graph_from_lists(
             edgelist_path=f'./graphs/{name} combined graph.edgelist',
-            nodelist=f'./graphs/{name} gender.nodelist'
+            nodelist=f'./graphs/{name}_gender.nodelist'
         )
         
         # Convert graph node names to lowercase
@@ -211,7 +210,7 @@ def train(train_epoch=1000):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = CGCNN(node_features=node_features, edge_features=edge_features, hidden_channels=hidden_channels).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    mlp=MLP(32, [32,16,8], 1).to(device)
+    
     
     history=np.zeros(train_epoch+10)
     for epoch in range(train_epoch):
@@ -227,34 +226,14 @@ def train(train_epoch=1000):
             output_vectors = model(graph.x/5, graph.edge_index, graph.edge_attr)
             
             # 각각 남 여 캐릭터의 선호도
-            '''
-            num_nodes = output_vectors.size(0)
-            similarity_matrix = []
-            
-            character1=label[0].item()
-            character2=label[0].item()
-            row=[]
-            for i in range(num_nodes):
-                row.append(mlp(torch.cat((output_vectors[i], output_vectors[character1]), dim=0))[0])
-            similarity_matrix.append(torch.stack(row))
-            row=[]
-            for i in range(num_nodes):
-                row.append(mlp(torch.cat((output_vectors[i], output_vectors[character2]), dim=0))[0])
-            similarity_matrix.append(torch.stack(row))
-
-            similarity_matrix = torch.stack(similarity_matrix).to('cuda')  # Combine rows into a matrix
-
-            # Flatten, apply softmax, and reshape back
-            similarity_matrix_stable = similarity_matrix - similarity_matrix.max(dim=1, keepdim=True)[0]  # 최대값 제거
-            similarity_matrix_softmax = F.softmax(similarity_matrix_stable, dim=1)
-            similarity_matrix = similarity_matrix_softmax  # Reshape back to original shape
-            '''
-            similarity_matrix=calculate_similarity(output_vectors,label)
+           
+            similarity_matrix=calculate_similarity(output_vectors)
             #print(similarity_matrix)
             character_num=graph.x.shape[0]
-            label1=torch.zeros((2,character_num)).to('cuda')
-            label1[0,label[1].item()]=1
-            label1[1,label[0].item()]=1
+           
+            label1=torch.zeros((character_num,character_num)).to('cuda')
+            label1[label[0].item()][label[1].item()]=1
+            label1[label[1].item()][label[0].item()]=1
             criterion = nn.MSELoss()
             loss = criterion(label1, similarity_matrix)
             total_loss += loss

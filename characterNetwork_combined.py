@@ -298,6 +298,9 @@ def plot_combined_graph(name_list, name_frequency, cooccurrence_matrix, sentimen
         'male': 'M',
         'female': 'F',
         'unknown': 'U',
+        'M': 'M',
+        'F': 'F',
+        'U': 'U',
         'andy': 'U'  # 모호한 경우 처리
     }
     mapped_genders = {name: gender_map.get(gender, 'U') for name, gender in genders.items()}
@@ -366,11 +369,25 @@ def save_nodelist(genders, output_file):
             mapped_gender = gender_map.get(gender, 'U')  # 성별 매핑, 없으면 'U'
             f.write(f"{name},{mapped_gender}\n")
 
+# 파일에서 성별 불러오기
+def load_nodelist(input_file):
+    """
+    gender.nodelist 파일에서 성별 정보를 로드합니다.
+    :param input_file: gender.nodelist 파일 경로.
+    :return: {이름: 성별} 형태의 딕셔너리.
+    """
+    genders = {}
+    with open(input_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            name, gender = line.strip().split(',')
+            genders[name] = gender
+    return genders
+
 if __name__ == '__main__':
     nlp = spacy.load('en_core_web_sm')
     nlp.max_length = 2000000 
     words = common_words('common_datas/common_words.txt')
-    novel_name = 'TheGreatGatsby'
+    novel_name = 'ThePhantomOfTheOpera'
     novel_folder = Path(os.getcwd()) / 'novels'
     novel = read_novel(novel_name, novel_folder)
     # sentence_list = sent_tokenize(novel)
@@ -381,7 +398,10 @@ if __name__ == '__main__':
     name_frequency, name_list = top_names(preliminary_name_list, novel, 25)
     
     # 성별 추론
-    genders = predict_gender(name_list, context_info)
+    # genders = predict_gender(name_list, context_info)
+    # 추론하지 않고 파일에서 불러오기
+    nodelist_path = f'./graphs/{novel_name}_gender.nodelist'
+    genders = load_nodelist(nodelist_path)
 
     # 최상위 등장인물 및 빈도 출력
     print("주요 등장인물 및 등장 빈도:")
@@ -395,8 +415,8 @@ if __name__ == '__main__':
     cooccurrence_matrix, sentiment_matrix = calculate_matrix(name_list, sentence_list, align_rate)
     
     # Nodelist 저장
-    nodelist_path = f'./graphs/{novel_name}_gender.nodelist'
-    save_nodelist(genders, nodelist_path)
+    # nodelist_path = f'./graphs/{novel_name}_gender.nodelist'
+    # save_nodelist(genders, nodelist_path)
 
 
     # Create and save the combined graph
